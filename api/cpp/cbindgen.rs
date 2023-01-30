@@ -331,6 +331,7 @@ fn gen_corelib(
             "slint_windowrc_dark_color_scheme",
             "slint_windowrc_dispatch_pointer_event",
             "slint_windowrc_dispatch_key_event",
+            "slint_windowrc_reset_graphics_state",
             "slint_new_path_elements",
             "slint_new_path_events",
             "slint_color_brighter",

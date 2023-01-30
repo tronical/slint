@@ -360,6 +360,15 @@ impl Window {
         self.0.window_adapter().renderer().set_rendering_notifier(Box::new(callback))
     }
 
+    /// Call this function for example when you're within BeforeRendering or AfterRendering of a RenderingNotifier,
+    /// and your rendering left the state of the graphics API in a state that was different when you were called.
+    /// This may be necessary when invoking third-party rendering engines that don't clean up.
+    /// This function is highly renderer specific, not all renderers implement it.
+    /// Call with caution as it adds a significant cost to rendering performance.
+    pub fn reset_graphics_state(&self) {
+        self.0.window_adapter().renderer().reset_graphics_state()
+    }
+
     /// This function allows registering a callback that's invoked when the user tries to close a window.
     /// The callback has to return a [CloseRequestResponse].
     pub fn on_close_requested(&self, callback: impl FnMut() -> CloseRequestResponse + 'static) {

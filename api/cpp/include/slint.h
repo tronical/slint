@@ -170,6 +170,8 @@ public:
         }
     }
 
+    void reset_graphics_state() { cbindgen_private::slint_windowrc_reset_graphics_state(&inner); }
+
     // clang-format off
     template<std::invocable F>
         requires(std::is_convertible_v<std::invoke_result_t<F>, CloseRequestResponse>)
@@ -421,6 +423,13 @@ public:
     {
         return inner.set_rendering_notifier(std::forward<F>(callback));
     }
+
+    /// Call this function for example when you're within BeforeRendering or AfterRendering of a
+    /// RenderingNotifier, and your rendering left the state of the graphics API in a state that was
+    /// different when you were called. This may be necessary when invoking third-party rendering
+    /// engines that don't clean up. This function is highly renderer specific, not all renderers
+    /// implement it. Call with caution as it adds a significant cost to rendering performance.
+    void reset_graphics_state() { inner.reset_graphics_state(); }
 
     /// This function allows registering a callback that's invoked when the user tries to close
     /// a window.

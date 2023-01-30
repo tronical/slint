@@ -4,7 +4,7 @@
 #![doc = include_str!("README.md")]
 #![doc(html_logo_url = "https://slint-ui.com/logo/slint-logo-square-light.svg")]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use i_slint_core::api::{
@@ -88,6 +88,7 @@ impl<
             surface,
             rendering_metrics_collector,
             native_window,
+            reset_context_after_api_call: Default::default(),
         };
 
         if let Some(callback) = self.rendering_notifier.borrow_mut().as_mut() {
@@ -140,7 +141,12 @@ impl<
 
                     canvas.with_graphics_api(|api| {
                         callback.notify(RenderingState::BeforeRendering, &api)
-                    })
+                    });
+
+                    if canvas.reset_context_after_api_call.take() {
+                        gr_context.reset(None);
+                        gr_context.reset_gl_texture_bindings();
+                    }
                 }
 
                 let mut box_shadow_cache = Default::default();
@@ -364,6 +370,15 @@ impl<NativeWindowWrapper> i_slint_core::renderer::Renderer for SkiaRenderer<Nati
         }
     }
 
+    fn reset_graphics_state(&self) {
+        let canvas = if self.canvas.borrow().is_some() {
+            std::cell::Ref::map(self.canvas.borrow(), |canvas_opt| canvas_opt.as_ref().unwrap())
+        } else {
+            return;
+        };
+        canvas.reset_context_after_api_call.set(true);
+    }
+
     fn default_font_size(&self) -> LogicalLength {
         self::textlayout::DEFAULT_FONT_SIZE
     }
@@ -412,6 +427,7 @@ struct SkiaCanvas<SurfaceType: Surface, NativeWindowWrapper> {
     surface: SurfaceType,
     // Kept here to make sure that the raw window handles used by the surface are kept alive
     native_window: NativeWindowWrapper,
+    reset_context_after_api_call: Cell<bool>,
 }
 
 impl<SurfaceType: Surface, NativeWindowWrapper> SkiaCanvas<SurfaceType, NativeWindowWrapper> {

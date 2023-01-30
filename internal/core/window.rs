@@ -1083,4 +1083,13 @@ pub mod ffi {
         let window_adapter = &*(handle as *const Rc<dyn WindowAdapter>);
         window_adapter.window().0.process_mouse_input(event);
     }
+
+    /// Reset the renderer's graphics state
+    #[no_mangle]
+    pub unsafe extern "C" fn slint_windowrc_reset_graphics_state(
+        handle: *const WindowAdapterRcOpaque,
+    ) {
+        let window_adapter = &*(handle as *const Rc<dyn WindowAdapter>);
+        window_adapter.window().reset_graphics_state()
+    }
 }

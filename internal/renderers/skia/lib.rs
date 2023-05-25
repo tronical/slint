@@ -200,21 +200,70 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         max_width: Option<LogicalLength>,
         scale_factor: ScaleFactor,
     ) -> LogicalSize {
-        let (layout, _) = textlayout::create_layout(
-            font_request,
-            scale_factor,
-            text,
-            None,
-            max_width.map(|w| w * scale_factor),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            None,
-        );
+        let (width, height) = sharedfontdb::FONT_DB.with(|db| {
+            let mut db = db.borrow_mut();
+            let mut font_system = &mut db.font_system;
 
-        PhysicalSize::new(layout.max_intrinsic_width().ceil(), layout.height().ceil())
-            / scale_factor
+            // TODO:
+            // text alignment (horizontal and vertical)
+            // overflow handling
+            // wrap / no-wrap
+
+            let pixel_size: PhysicalLength =
+                font_request.pixel_size.unwrap_or(textlayout::DEFAULT_FONT_SIZE) * scale_factor;
+
+            let mut buffer = cosmic_text::Buffer::new(
+                &mut font_system,
+                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
+            );
+            buffer.set_text(
+                &mut font_system,
+                text,
+                cosmic_text::Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+            );
+            buffer.shape_until(&mut font_system, i32::max_value());
+            buffer.set_size(
+                font_system,
+                max_width.map(|w| w * scale_factor).unwrap_or_default().get(),
+                f32::MAX,
+            );
+
+            let mut width: f32 = 0.0;
+            let mut layout_lines = 0;
+            for line in buffer.lines.iter() {
+                match line.layout_opt() {
+                    Some(layout) => {
+                        for line in layout {
+                            width = width.max(line.w);
+                        }
+
+                        layout_lines += layout.len()
+                    }
+                    None => (),
+                }
+            }
+
+            let height = layout_lines as f32 * buffer.metrics().line_height;
+
+            (width, height)
+        });
+
+        PhysicalSize::new(width.ceil(), height.ceil()) / scale_factor
+        // let (layout, _) = textlayout::create_layout(
+        //     font_request,
+        //     scale_factor,
+        //     text,
+        //     None,
+        //     max_width.map(|w| w * scale_factor),
+        //     Default::default(),
+        //     Default::default(),
+        //     Default::default(),
+        //     Default::default(),
+        //     None,
+        // );
+
+        // PhysicalSize::new(layout.max_intrinsic_width().ceil(), layout.height().ceil())
     }
 
     fn text_input_byte_offset_for_position(

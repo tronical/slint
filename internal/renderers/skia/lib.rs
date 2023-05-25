@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use i_slint_common::sharedfontdb;
 use i_slint_core::api::{
     GraphicsAPI, PhysicalSize as PhysicalWindowSize, RenderingNotifier, RenderingState,
     SetRenderingNotifierError,
@@ -307,14 +308,18 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         &self,
         data: &'static [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        textlayout::register_font_from_memory(data)
+        // TODO(cosmic): remove
+        textlayout::register_font_from_memory(data).unwrap();
+        sharedfontdb::register_font_from_memory(data)
     }
 
     fn register_font_from_path(
         &self,
         path: &std::path::Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        textlayout::register_font_from_path(path)
+        // TODO(cosmic): remove
+        textlayout::register_font_from_path(path).unwrap();
+        sharedfontdb::register_font_from_path(path)
     }
 
     fn set_rendering_notifier(

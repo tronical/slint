@@ -1,10 +1,12 @@
 // Copyright © SixtyFPS GmbH <info@slint.dev>
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-1.0 OR LicenseRef-Slint-commercial
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::pin::Pin;
 
 use super::{PhysicalLength, PhysicalPoint, PhysicalRect, PhysicalSize};
-use i_slint_common::sharedfontdb;
+use i_slint_common::sharedfontdb::{self, fontdb};
 use i_slint_core::graphics::boxshadowcache::BoxShadowCache;
 use i_slint_core::graphics::euclid::num::Zero;
 use i_slint_core::graphics::euclid::{self, Vector2D};
@@ -16,6 +18,7 @@ use i_slint_core::lengths::{
 };
 use i_slint_core::window::WindowInner;
 use i_slint_core::{items, Brush, Color, Property};
+use itertools::Itertools;
 
 pub type SkiaBoxShadowCache = BoxShadowCache<skia_safe::Image>;
 
@@ -489,20 +492,40 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
             );
             buffer.set_size(&mut font_system, max_width.get(), max_height.get());
 
-            // TODO: replace use of swash cache and pixel drawing with draw_glyphs_at()
-            let mut cache = cosmic_text::SwashCache::new();
-            buffer.draw(
-                &mut font_system,
-                &mut cache,
-                cosmic_text::Color(text.color().color().as_argb_encoded()),
-                |x, y, width, height, color| {
-                    let rect = skia_safe::IRect::from_xywh(x as _, y as _, width as _, height as _);
-                    let color = to_skia_color(&Color::from_argb_encoded(color.0));
-                    let mut paint = skia_safe::Paint::default();
-                    paint.set_color(color);
-                    self.canvas.draw_irect(rect, &paint);
-                },
-            );
+            let paint = match self.brush_to_paint(text.color(), max_width, max_height) {
+                Some(paint) => paint,
+                None => return,
+            };
+
+            for run in buffer.layout_runs() {
+                for ((font_id, font_size_bits), glyphs) in &run
+                    .glyphs
+                    .iter()
+                    .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
+                {
+                    if let Some(typeface) = TYPEFACE_CACHE
+                        .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
+                    {
+                        let size = f32::from_bits(font_size_bits);
+                        let font = skia_safe::Font::from_typeface(typeface, Some(size));
+                        let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
+                            .map(|g| {
+                                (
+                                    g.cache_key.glyph_id,
+                                    skia_safe::Point::new(g.x_int as _, g.y_int as _),
+                                )
+                            })
+                            .unzip();
+                        self.canvas.draw_glyphs_at(
+                            &glyph_ids,
+                            skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
+                            skia_safe::Point::new(0., run.line_y as _),
+                            &font,
+                            &paint,
+                        )
+                    }
+                }
+            }
         });
     }
 
@@ -946,4 +969,47 @@ fn adjust_to_image_fit(
             }
         }
     };
+}
+
+struct CachedTypeface {
+    _data: std::sync::Arc<dyn AsRef<[u8]>>,
+    type_face: skia_safe::typeface::Typeface,
+}
+
+// Cache skia_safe::typeface::Typeface for fontdb::ID
+#[derive(Default)]
+struct TypefaceCache {
+    typeface_for_id: HashMap<fontdb::ID, CachedTypeface>,
+}
+
+impl TypefaceCache {
+    fn get(
+        &mut self,
+        id: fontdb::ID,
+        fontdb: &mut fontdb::Database,
+    ) -> Option<skia_safe::typeface::Typeface> {
+        match self.typeface_for_id.entry(id) {
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                Some(entry.get().type_face.clone())
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                // Safety: Like everyone else, we mmap() fonts from the disk
+                unsafe { fontdb.make_shared_face_data(id) }.and_then(|(font_data, ttc_index)| {
+                    // Safety: The font_data Arc ensures the data remains alive
+                    let sk_data =
+                        unsafe { skia_safe::Data::new_bytes(font_data.as_ref().as_ref()) };
+                    skia_safe::typeface::Typeface::from_data(sk_data, Some(ttc_index as usize)).map(
+                        |type_face| {
+                            let cached_face = CachedTypeface { _data: font_data, type_face };
+                            entry.insert(cached_face).type_face.clone()
+                        },
+                    )
+                })
+            }
+        }
+    }
+}
+
+thread_local! {
+    static TYPEFACE_CACHE: RefCell<TypefaceCache> = Default::default()
 }

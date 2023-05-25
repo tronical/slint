@@ -4,6 +4,7 @@
 use std::pin::Pin;
 
 use super::{PhysicalLength, PhysicalPoint, PhysicalRect, PhysicalSize};
+use i_slint_common::sharedfontdb;
 use i_slint_core::graphics::boxshadowcache::BoxShadowCache;
 use i_slint_core::graphics::euclid::num::Zero;
 use i_slint_core::graphics::euclid::{self, Vector2D};
@@ -462,28 +463,48 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
         let string = string.as_str();
         let font_request = text.font_request(WindowInner::from_pub(self.window));
 
-        let paint = match self.brush_to_paint(text.color(), max_width, max_height) {
-            Some(paint) => paint,
-            None => return,
-        };
+        // TODO:
+        // text alignment (horizontal and vertical)
+        // overflow handling
+        // wrap / no-wrap
 
-        let mut text_style = skia_safe::textlayout::TextStyle::new();
-        text_style.set_foreground_color(&paint);
-
-        let (layout, layout_top_left) = super::textlayout::create_layout(
-            font_request,
-            self.scale_factor,
-            string,
-            Some(text_style),
-            Some(max_width),
-            max_height,
-            text.horizontal_alignment(),
-            text.vertical_alignment(),
-            text.overflow(),
-            None,
+        // TODO: share font system, avoid cloning fontdb, locale
+        let mut font_system = cosmic_text::FontSystem::new_with_locale_and_db(
+            "en-US".into(),
+            sharedfontdb::FONT_DB.with(|db| db.borrow().clone()),
         );
 
-        layout.paint(&mut self.canvas, to_skia_point(layout_top_left));
+        let pixel_size: PhysicalLength =
+            font_request.pixel_size.unwrap_or(super::textlayout::DEFAULT_FONT_SIZE)
+                * self.scale_factor;
+
+        // apply correct font to attributes, etc.
+        let mut buffer = cosmic_text::Buffer::new(
+            &mut font_system,
+            cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
+        );
+        buffer.set_text(
+            &mut font_system,
+            string,
+            cosmic_text::Attrs::new(),
+            cosmic_text::Shaping::Advanced,
+        );
+        buffer.set_size(&mut font_system, max_width.get(), max_height.get());
+
+        // TODO: replace use of swash cache and pixel drawing with draw_glyphs_at()
+        let mut cache = cosmic_text::SwashCache::new();
+        buffer.draw(
+            &mut font_system,
+            &mut cache,
+            cosmic_text::Color(text.color().color().as_argb_encoded()),
+            |x, y, width, height, color| {
+                let rect = skia_safe::IRect::from_xywh(x as _, y as _, width as _, height as _);
+                let color = to_skia_color(&Color::from_argb_encoded(color.0));
+                let mut paint = skia_safe::Paint::default();
+                paint.set_color(color);
+                self.canvas.draw_irect(rect, &paint);
+            },
+        );
     }
 
     fn draw_text_input(

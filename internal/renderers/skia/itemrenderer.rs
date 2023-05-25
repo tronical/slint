@@ -554,60 +554,123 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
         text_style.set_foreground_color(&paint);
 
         let visual_representation = text_input.visual_representation(None);
+        let string = &visual_representation.text;
 
-        let selection = if !visual_representation.preedit_range.is_empty() {
-            Some(super::textlayout::Selection {
-                range: visual_representation.preedit_range,
-                foreground: None,
-                background: None,
-                underline: true,
-            })
-        } else if !visual_representation.selection_range.is_empty() {
-            Some(super::textlayout::Selection {
-                range: visual_representation.selection_range,
-                foreground: text_input.selection_foreground_color().into(),
-                background: text_input.selection_background_color().into(),
-                underline: false,
-            })
-        } else {
-            None
-        };
+        sharedfontdb::FONT_DB.with(|db| {
+            let mut db = db.borrow_mut();
+            let mut font_system = &mut db.font_system;
 
-        let (layout, layout_top_left) = super::textlayout::create_layout(
-            font_request,
-            self.scale_factor,
-            &visual_representation.text,
-            Some(text_style),
-            Some(max_width),
-            max_height,
-            text_input.horizontal_alignment(),
-            text_input.vertical_alignment(),
-            i_slint_core::items::TextOverflow::Clip,
-            selection.as_ref(),
-        );
+            // TODO:
+            // text alignment (horizontal and vertical)
+            // overflow handling
+            // wrap / no-wrap
 
-        layout.paint(&mut self.canvas, to_skia_point(layout_top_left));
+            let pixel_size: PhysicalLength =
+                font_request.pixel_size.unwrap_or(super::textlayout::DEFAULT_FONT_SIZE)
+                    * self.scale_factor;
 
-        if let Some(cursor_position) = visual_representation.cursor_position {
-            let cursor_rect = super::textlayout::cursor_rect(
-                &visual_representation.text,
-                cursor_position,
-                layout,
-                text_input.text_cursor_width() * self.scale_factor,
-            )
-            .translate(layout_top_left.to_vector());
+            // apply correct font to attributes, etc.
+            let mut buffer = cosmic_text::Buffer::new(
+                &mut font_system,
+                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
+            );
+            buffer.set_text(
+                &mut font_system,
+                string,
+                cosmic_text::Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+            );
+            buffer.set_size(&mut font_system, max_width.get(), max_height.get());
 
-            let cursor_paint = match self.brush_to_paint(
-                text_input.color(),
-                cursor_rect.width_length(),
-                cursor_rect.height_length(),
-            ) {
+            let paint = match self.brush_to_paint(text_input.color(), max_width, max_height) {
                 Some(paint) => paint,
                 None => return,
             };
 
-            self.canvas.draw_rect(to_skia_rect(&cursor_rect), &cursor_paint);
-        }
+            for run in buffer.layout_runs() {
+                for ((font_id, font_size_bits), glyphs) in &run
+                    .glyphs
+                    .iter()
+                    .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
+                {
+                    if let Some(typeface) = TYPEFACE_CACHE
+                        .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
+                    {
+                        let size = f32::from_bits(font_size_bits);
+                        let font = skia_safe::Font::from_typeface(typeface, Some(size));
+                        let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
+                            .map(|g| {
+                                (
+                                    g.cache_key.glyph_id,
+                                    skia_safe::Point::new(g.x_int as _, g.y_int as _),
+                                )
+                            })
+                            .unzip();
+                        self.canvas.draw_glyphs_at(
+                            &glyph_ids,
+                            skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
+                            skia_safe::Point::new(0., run.line_y as _),
+                            &font,
+                            &paint,
+                        )
+                    }
+                }
+            }
+        });
+
+        // let selection = if !visual_representation.preedit_range.is_empty() {
+        //     Some(super::textlayout::Selection {
+        //         range: visual_representation.preedit_range,
+        //         foreground: None,
+        //         background: None,
+        //         underline: true,
+        //     })
+        // } else if !visual_representation.selection_range.is_empty() {
+        //     Some(super::textlayout::Selection {
+        //         range: visual_representation.selection_range,
+        //         foreground: text_input.selection_foreground_color().into(),
+        //         background: text_input.selection_background_color().into(),
+        //         underline: false,
+        //     })
+        // } else {
+        //     None
+        // };
+
+        // let (layout, layout_top_left) = super::textlayout::create_layout(
+        //     font_request,
+        //     self.scale_factor,
+        //     &visual_representation.text,
+        //     Some(text_style),
+        //     Some(max_width),
+        //     max_height,
+        //     text_input.horizontal_alignment(),
+        //     text_input.vertical_alignment(),
+        //     i_slint_core::items::TextOverflow::Clip,
+        //     selection.as_ref(),
+        // );
+
+        // layout.paint(&mut self.canvas, to_skia_point(layout_top_left));
+
+        // if let Some(cursor_position) = visual_representation.cursor_position {
+        //     let cursor_rect = super::textlayout::cursor_rect(
+        //         &visual_representation.text,
+        //         cursor_position,
+        //         layout,
+        //         text_input.text_cursor_width() * self.scale_factor,
+        //     )
+        //     .translate(layout_top_left.to_vector());
+
+        //     let cursor_paint = match self.brush_to_paint(
+        //         text_input.color(),
+        //         cursor_rect.width_length(),
+        //         cursor_rect.height_length(),
+        //     ) {
+        //         Some(paint) => paint,
+        //         None => return,
+        //     };
+
+        //     self.canvas.draw_rect(to_skia_rect(&cursor_rect), &cursor_paint);
+        // }
     }
 
     fn draw_path(

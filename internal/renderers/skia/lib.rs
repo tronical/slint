@@ -237,33 +237,17 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
                         for line in layout {
                             width = width.max(line.w);
                         }
-
-                        layout_lines += layout.len()
                     }
                     None => (),
                 }
             }
 
-            let height = layout_lines as f32 * buffer.metrics().line_height;
+            let height = buffer.lines.len() as f32 * buffer.metrics().line_height;
 
             (width, height)
         });
 
         PhysicalSize::new(width.ceil(), height.ceil()) / scale_factor
-        // let (layout, _) = textlayout::create_layout(
-        //     font_request,
-        //     scale_factor,
-        //     text,
-        //     None,
-        //     max_width.map(|w| w * scale_factor),
-        //     Default::default(),
-        //     Default::default(),
-        //     Default::default(),
-        //     Default::default(),
-        //     None,
-        // );
-
-        // PhysicalSize::new(layout.max_intrinsic_width().ceil(), layout.height().ceil())
     }
 
     fn text_input_byte_offset_for_position(

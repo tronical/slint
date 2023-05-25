@@ -463,48 +463,47 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
         let string = string.as_str();
         let font_request = text.font_request(WindowInner::from_pub(self.window));
 
-        // TODO:
-        // text alignment (horizontal and vertical)
-        // overflow handling
-        // wrap / no-wrap
+        sharedfontdb::FONT_DB.with(|db| {
+            let mut db = db.borrow_mut();
+            let mut font_system = &mut db.font_system;
 
-        // TODO: share font system, avoid cloning fontdb, locale
-        let mut font_system = cosmic_text::FontSystem::new_with_locale_and_db(
-            "en-US".into(),
-            sharedfontdb::FONT_DB.with(|db| db.borrow().clone()),
-        );
+            // TODO:
+            // text alignment (horizontal and vertical)
+            // overflow handling
+            // wrap / no-wrap
 
-        let pixel_size: PhysicalLength =
-            font_request.pixel_size.unwrap_or(super::textlayout::DEFAULT_FONT_SIZE)
-                * self.scale_factor;
+            let pixel_size: PhysicalLength =
+                font_request.pixel_size.unwrap_or(super::textlayout::DEFAULT_FONT_SIZE)
+                    * self.scale_factor;
 
-        // apply correct font to attributes, etc.
-        let mut buffer = cosmic_text::Buffer::new(
-            &mut font_system,
-            cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
-        );
-        buffer.set_text(
-            &mut font_system,
-            string,
-            cosmic_text::Attrs::new(),
-            cosmic_text::Shaping::Advanced,
-        );
-        buffer.set_size(&mut font_system, max_width.get(), max_height.get());
+            // apply correct font to attributes, etc.
+            let mut buffer = cosmic_text::Buffer::new(
+                &mut font_system,
+                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
+            );
+            buffer.set_text(
+                &mut font_system,
+                string,
+                cosmic_text::Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+            );
+            buffer.set_size(&mut font_system, max_width.get(), max_height.get());
 
-        // TODO: replace use of swash cache and pixel drawing with draw_glyphs_at()
-        let mut cache = cosmic_text::SwashCache::new();
-        buffer.draw(
-            &mut font_system,
-            &mut cache,
-            cosmic_text::Color(text.color().color().as_argb_encoded()),
-            |x, y, width, height, color| {
-                let rect = skia_safe::IRect::from_xywh(x as _, y as _, width as _, height as _);
-                let color = to_skia_color(&Color::from_argb_encoded(color.0));
-                let mut paint = skia_safe::Paint::default();
-                paint.set_color(color);
-                self.canvas.draw_irect(rect, &paint);
-            },
-        );
+            // TODO: replace use of swash cache and pixel drawing with draw_glyphs_at()
+            let mut cache = cosmic_text::SwashCache::new();
+            buffer.draw(
+                &mut font_system,
+                &mut cache,
+                cosmic_text::Color(text.color().color().as_argb_encoded()),
+                |x, y, width, height, color| {
+                    let rect = skia_safe::IRect::from_xywh(x as _, y as _, width as _, height as _);
+                    let color = to_skia_color(&Color::from_argb_encoded(color.0));
+                    let mut paint = skia_safe::Paint::default();
+                    paint.set_color(color);
+                    self.canvas.draw_irect(rect, &paint);
+                },
+            );
+        });
     }
 
     fn draw_text_input(

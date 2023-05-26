@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-1.0 OR LicenseRef-Slint-commercial
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::rc::Rc;
 
+use itertools::Itertools;
+
 use euclid::approxeq::ApproxEq;
+use i_slint_common::sharedfontdb::{self, fontdb};
 use i_slint_core::graphics::boxshadowcache::BoxShadowCache;
 use i_slint_core::graphics::euclid::num::Zero;
 use i_slint_core::graphics::euclid::{self};
@@ -335,19 +339,50 @@ impl<'a> ItemRenderer for GLItemRenderer<'a> {
         };
 
         let mut canvas = self.canvas.borrow_mut();
-        fonts::layout_text_lines(
+
+        let layout = i_slint_core::cosmic_text::TextLayout::new(
             string,
-            &font,
-            PhysicalSize::from_lengths(max_width, max_height),
-            (text.horizontal_alignment(), text.vertical_alignment()),
-            text.wrap(),
-            text.overflow(),
-            false,
-            &paint,
-            |to_draw, pos, _, _| {
-                canvas.fill_text(pos.x, pos.y, to_draw.trim_end(), &paint).unwrap();
-            },
+            &text.font_request(WindowInner::from_pub(self.window)),
+            self.scale_factor,
+            fonts::DEFAULT_FONT_SIZE,
+            Some(max_width),
+            max_height,
         );
+
+        sharedfontdb::FONT_DB.with(|db| {
+            let mut db = db.borrow_mut();
+            let font_system = &mut db.font_system;
+
+            for run in layout.buffer.layout_runs() {
+                for ((font_id, font_size_bits), glyphs) in &run
+                    .glyphs
+                    .iter()
+                    .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
+                {
+                    let femtovg_font_id = FEMTOVG_FONT_MAPPER
+                        .with(|mapper| mapper.borrow_mut().get(font_id, font_system.db_mut()));
+
+                    let size = f32::from_bits(font_size_bits);
+                    let mut paint = paint.clone();
+                    paint.set_font_size(size);
+
+                    canvas.save();
+                    canvas.translate(0., run.line_y);
+                    canvas
+                        .fill_glyphs(
+                            glyphs.map(|cosmic_glyph| femtovg::PositionedGlyph {
+                                x: cosmic_glyph.x_int as _,
+                                y: cosmic_glyph.y_int as _,
+                                font_id: femtovg_font_id,
+                                glyph_id: cosmic_glyph.cache_key.glyph_id,
+                            }),
+                            &paint,
+                        )
+                        .unwrap();
+                    canvas.restore();
+                }
+            }
+        })
     }
 
     fn draw_text_input(
@@ -1439,4 +1474,53 @@ impl<'a> GLItemRenderer<'a> {
 
 pub fn to_femtovg_color(col: &Color) -> femtovg::Color {
     femtovg::Color::rgba(col.red(), col.green(), col.blue(), col.alpha())
+}
+
+// Cache map fontdb::ID to femtovg::FontId
+#[derive(Default)]
+struct FemtoVGFontMapper {
+    typeface_for_id: HashMap<fontdb::ID, femtovg::FontId>,
+}
+
+impl FemtoVGFontMapper {
+    fn get(&mut self, id: fontdb::ID, fontdb: &mut fontdb::Database) -> femtovg::FontId {
+        *self.typeface_for_id.entry(id).or_insert_with(|| {
+            // Safety: We map font files into memory that - while we never unmap them - may
+            // theoretically get corrupted/truncated by another process and then we'll crash
+            // and burn. In practice that should not happen though, font files are - at worst -
+            // removed by a package manager and they unlink instead of truncate, even when
+            // replacing files. Unlinking OTOH is safe and doesn't destroy the file mapping,
+            // the backing file becomes an orphan in a special area of the file system. That works
+            // on Unixy platforms and on Windows the default file flags prevent the deletion.
+            #[cfg(not(target_arch = "wasm32"))]
+            let (shared_data, face_index) =
+                unsafe { fontdb.make_shared_face_data(id).expect("unable to mmap font") };
+            #[cfg(target_arch = "wasm32")]
+            let (shared_data, face_index) = fontdb
+                .face_source(id)
+                .map(|(source, face_index)| {
+                    (
+                        match source {
+                            fontdb::Source::Binary(data) => data.clone(),
+                            // We feed only Source::Binary into fontdb on wasm
+                            #[allow(unreachable_patterns)]
+                            _ => unreachable!(),
+                        },
+                        face_index,
+                    )
+                })
+                .expect("invalid fontdb face id");
+
+            let text_context =
+                crate::fonts::FONT_CACHE.with(|cache| cache.borrow().text_context.clone());
+
+            text_context
+                .add_shared_font_with_index(crate::fonts::SharedFontData(shared_data), face_index)
+                .unwrap()
+        })
+    }
+}
+
+thread_local! {
+    static FEMTOVG_FONT_MAPPER: RefCell<FemtoVGFontMapper> = Default::default()
 }

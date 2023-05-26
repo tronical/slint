@@ -110,7 +110,7 @@ struct LoadedFont {
     fontdb_face_id: fontdb::ID,
 }
 
-struct SharedFontData(std::sync::Arc<dyn AsRef<[u8]>>);
+pub(crate) struct SharedFontData(pub(crate) std::sync::Arc<dyn AsRef<[u8]>>);
 impl AsRef<[u8]> for SharedFontData {
     fn as_ref(&self) -> &[u8] {
         self.0.as_ref().as_ref()

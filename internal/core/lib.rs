@@ -75,6 +75,9 @@ pub use graphics::RgbaColor;
 #[doc(inline)]
 pub use graphics::PathData;
 
+#[cfg(feature = "cosmic-text")]
+pub mod cosmic_text;
+
 use api::PlatformError;
 use platform::Platform;
 

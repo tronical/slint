@@ -22,6 +22,7 @@ use i_slint_core::lengths::{
 use i_slint_core::platform::PlatformError;
 use i_slint_core::window::WindowInner;
 use i_slint_core::Brush;
+use itertools::max;
 
 type PhysicalLength = euclid::Length<f32, PhysicalPx>;
 type PhysicalRect = euclid::Rect<f32, PhysicalPx>;
@@ -230,7 +231,6 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
             );
 
             let mut width: f32 = 0.0;
-            let mut layout_lines = 0;
             for line in buffer.lines.iter() {
                 match line.layout_opt() {
                     Some(layout) => {
@@ -267,32 +267,42 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
 
         let visual_representation = text_input.visual_representation(None);
 
-        let (layout, layout_top_left) = textlayout::create_layout(
-            font_request,
-            scale_factor,
-            &visual_representation.text,
-            None,
-            Some(max_width),
-            max_height,
-            text_input.horizontal_alignment(),
-            text_input.vertical_alignment(),
-            i_slint_core::items::TextOverflow::Clip,
-            None,
-        );
+        let byte_offset = 0;
 
-        let utf16_index =
-            layout.get_glyph_position_at_coordinate((pos.x, pos.y - layout_top_left.y)).position;
-        let mut utf16_count = 0;
-        let byte_offset = visual_representation
-            .text
-            .char_indices()
-            .find(|(_, x)| {
-                let r = utf16_count >= utf16_index;
-                utf16_count += x.len_utf16() as i32;
-                r
-            })
-            .unwrap_or((visual_representation.text.len(), '\0'))
-            .0;
+        let string = text_input.text();
+        let string = string.as_str();
+
+        let byte_offset = sharedfontdb::FONT_DB.with(|db| {
+            let mut db = db.borrow_mut();
+            let mut font_system = &mut db.font_system;
+
+            // TODO:
+            // text alignment (horizontal and vertical)
+            // overflow handling
+            // wrap / no-wrap
+
+            let pixel_size: PhysicalLength =
+                font_request.pixel_size.unwrap_or(textlayout::DEFAULT_FONT_SIZE) * scale_factor;
+
+            let mut buffer = cosmic_text::Buffer::new(
+                &mut font_system,
+                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
+            );
+            buffer.set_text(
+                &mut font_system,
+                string,
+                cosmic_text::Attrs::new(),
+                cosmic_text::Shaping::Advanced,
+            );
+            buffer.shape_until(&mut font_system, i32::max_value());
+            buffer.set_size(font_system, max_width.get(), max_height.get());
+
+            if let Some(cursor) = buffer.hit(pos.x, pos.y) {
+                cursor.index
+            } else {
+                0
+            }
+        });
 
         visual_representation.map_byte_offset_from_byte_offset_in_visual_text(byte_offset)
     }
@@ -314,27 +324,28 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         let string = text_input.text();
         let string = string.as_str();
 
-        let (layout, layout_top_left) = textlayout::create_layout(
-            font_request,
-            scale_factor,
-            string,
-            None,
-            Some(max_width),
-            max_height,
-            text_input.horizontal_alignment(),
-            text_input.vertical_alignment(),
-            i_slint_core::items::TextOverflow::Clip,
-            None,
-        );
+        // let (layout, layout_top_left) = textlayout::create_layout(
+        //     font_request,
+        //     scale_factor,
+        //     string,
+        //     None,
+        //     Some(max_width),
+        //     max_height,
+        //     text_input.horizontal_alignment(),
+        //     text_input.vertical_alignment(),
+        //     i_slint_core::items::TextOverflow::Clip,
+        //     None,
+        // );
 
-        let physical_cursor_rect = textlayout::cursor_rect(
-            string,
-            byte_offset,
-            layout,
-            text_input.text_cursor_width() * scale_factor,
-        );
+        // let physical_cursor_rect = textlayout::cursor_rect(
+        //     string,
+        //     byte_offset,
+        //     layout,
+        //     text_input.text_cursor_width() * scale_factor,
+        // );
 
-        physical_cursor_rect.translate(layout_top_left.to_vector()) / scale_factor
+        // physical_cursor_rect.translate(layout_top_left.to_vector()) / scale_factor
+        LogicalRect::default()
     }
 
     fn register_font_from_memory(

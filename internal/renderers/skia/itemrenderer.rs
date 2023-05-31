@@ -273,6 +273,43 @@ impl<'a> SkiaRenderer<'a> {
             Some(surface.image_snapshot())
         })
     }
+
+    fn draw_glyphs(
+        &mut self,
+        buffer: cosmic_text::Buffer,
+        font_system: &mut cosmic_text::FontSystem,
+        paint: skia_safe::Paint,
+    ) {
+        for run in buffer.layout_runs() {
+            for ((font_id, font_size_bits), glyphs) in &run
+                .glyphs
+                .iter()
+                .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
+            {
+                if let Some(typeface) = TYPEFACE_CACHE
+                    .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
+                {
+                    let size = f32::from_bits(font_size_bits);
+                    let font = skia_safe::Font::from_typeface(typeface, Some(size));
+                    let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
+                        .map(|g| {
+                            (
+                                g.cache_key.glyph_id,
+                                skia_safe::Point::new(g.x_int as _, g.y_int as _),
+                            )
+                        })
+                        .unzip();
+                    self.canvas.draw_glyphs_at(
+                        &glyph_ids,
+                        skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
+                        skia_safe::Point::new(0., run.line_y as _),
+                        &font,
+                        &paint,
+                    )
+                }
+            }
+        }
+    }
 }
 
 impl<'a> SkiaRenderer<'a> {
@@ -497,35 +534,7 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
                 None => return,
             };
 
-            for run in buffer.layout_runs() {
-                for ((font_id, font_size_bits), glyphs) in &run
-                    .glyphs
-                    .iter()
-                    .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
-                {
-                    if let Some(typeface) = TYPEFACE_CACHE
-                        .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
-                    {
-                        let size = f32::from_bits(font_size_bits);
-                        let font = skia_safe::Font::from_typeface(typeface, Some(size));
-                        let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
-                            .map(|g| {
-                                (
-                                    g.cache_key.glyph_id,
-                                    skia_safe::Point::new(g.x_int as _, g.y_int as _),
-                                )
-                            })
-                            .unzip();
-                        self.canvas.draw_glyphs_at(
-                            &glyph_ids,
-                            skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
-                            skia_safe::Point::new(0., run.line_y as _),
-                            &font,
-                            &paint,
-                        )
-                    }
-                }
-            }
+            self.draw_glyphs(buffer, font_system, paint);
         });
     }
 
@@ -587,35 +596,7 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
                 None => return,
             };
 
-            for run in buffer.layout_runs() {
-                for ((font_id, font_size_bits), glyphs) in &run
-                    .glyphs
-                    .iter()
-                    .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
-                {
-                    if let Some(typeface) = TYPEFACE_CACHE
-                        .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
-                    {
-                        let size = f32::from_bits(font_size_bits);
-                        let font = skia_safe::Font::from_typeface(typeface, Some(size));
-                        let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
-                            .map(|g| {
-                                (
-                                    g.cache_key.glyph_id,
-                                    skia_safe::Point::new(g.x_int as _, g.y_int as _),
-                                )
-                            })
-                            .unzip();
-                        self.canvas.draw_glyphs_at(
-                            &glyph_ids,
-                            skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
-                            skia_safe::Point::new(0., run.line_y as _),
-                            &font,
-                            &paint,
-                        )
-                    }
-                }
-            }
+            self.draw_glyphs(buffer, font_system, paint);
         });
 
         // let selection = if !visual_representation.preedit_range.is_empty() {

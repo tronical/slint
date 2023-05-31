@@ -274,41 +274,41 @@ impl<'a> SkiaRenderer<'a> {
         })
     }
 
-    fn draw_glyphs(
-        &mut self,
-        buffer: cosmic_text::Buffer,
-        font_system: &mut cosmic_text::FontSystem,
-        paint: skia_safe::Paint,
-    ) {
-        for run in buffer.layout_runs() {
-            for ((font_id, font_size_bits), glyphs) in &run
-                .glyphs
-                .iter()
-                .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
-            {
-                if let Some(typeface) = TYPEFACE_CACHE
-                    .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
+    fn draw_glyphs(&mut self, buffer: cosmic_text::Buffer, paint: skia_safe::Paint) {
+        sharedfontdb::FONT_DB.with(|db| {
+            let mut db = db.borrow_mut();
+            let font_system = &mut db.font_system;
+
+            for run in buffer.layout_runs() {
+                for ((font_id, font_size_bits), glyphs) in &run
+                    .glyphs
+                    .iter()
+                    .group_by(|glyph| (glyph.cache_key.font_id, glyph.cache_key.font_size_bits))
                 {
-                    let size = f32::from_bits(font_size_bits);
-                    let font = skia_safe::Font::from_typeface(typeface, Some(size));
-                    let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
-                        .map(|g| {
-                            (
-                                g.cache_key.glyph_id,
-                                skia_safe::Point::new(g.x_int as _, g.y_int as _),
-                            )
-                        })
-                        .unzip();
-                    self.canvas.draw_glyphs_at(
-                        &glyph_ids,
-                        skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
-                        skia_safe::Point::new(0., run.line_y as _),
-                        &font,
-                        &paint,
-                    )
+                    if let Some(typeface) = TYPEFACE_CACHE
+                        .with(|cache| cache.borrow_mut().get(font_id, font_system.db_mut()))
+                    {
+                        let size = f32::from_bits(font_size_bits);
+                        let font = skia_safe::Font::from_typeface(typeface, Some(size));
+                        let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs
+                            .map(|g| {
+                                (
+                                    g.cache_key.glyph_id,
+                                    skia_safe::Point::new(g.x_int as _, g.y_int as _),
+                                )
+                            })
+                            .unzip();
+                        self.canvas.draw_glyphs_at(
+                            &glyph_ids,
+                            skia_safe::canvas::GlyphPositions::Points(&glyph_positions),
+                            skia_safe::Point::new(0., run.line_y as _),
+                            &font,
+                            &paint,
+                        )
+                    }
                 }
             }
-        }
+        });
     }
 }
 
@@ -503,39 +503,21 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
         let string = string.as_str();
         let font_request = text.font_request(WindowInner::from_pub(self.window));
 
-        sharedfontdb::FONT_DB.with(|db| {
-            let mut db = db.borrow_mut();
-            let mut font_system = &mut db.font_system;
+        let layout = i_slint_core::cosmic_text::TextLayout::new(
+            &string,
+            &font_request,
+            self.scale_factor,
+            super::textlayout::DEFAULT_FONT_SIZE,
+            Some(max_width),
+            max_height,
+        );
 
-            // TODO:
-            // text alignment (horizontal and vertical)
-            // overflow handling
-            // wrap / no-wrap
+        let paint = match self.brush_to_paint(text.color(), max_width, max_height) {
+            Some(paint) => paint,
+            None => return,
+        };
 
-            let pixel_size: PhysicalLength =
-                font_request.pixel_size.unwrap_or(super::textlayout::DEFAULT_FONT_SIZE)
-                    * self.scale_factor;
-
-            // apply correct font to attributes, etc.
-            let mut buffer = cosmic_text::Buffer::new(
-                &mut font_system,
-                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
-            );
-            buffer.set_text(
-                &mut font_system,
-                string,
-                cosmic_text::Attrs::new(),
-                cosmic_text::Shaping::Advanced,
-            );
-            buffer.set_size(&mut font_system, max_width.get(), max_height.get());
-
-            let paint = match self.brush_to_paint(text.color(), max_width, max_height) {
-                Some(paint) => paint,
-                None => return,
-            };
-
-            self.draw_glyphs(buffer, font_system, paint);
-        });
+        self.draw_glyphs(layout.buffer, paint);
     }
 
     fn draw_text_input(
@@ -563,41 +545,22 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
         text_style.set_foreground_color(&paint);
 
         let visual_representation = text_input.visual_representation(None);
-        let string = &visual_representation.text;
 
-        sharedfontdb::FONT_DB.with(|db| {
-            let mut db = db.borrow_mut();
-            let mut font_system = &mut db.font_system;
+        let layout = i_slint_core::cosmic_text::TextLayout::new(
+            &visual_representation.text,
+            &font_request,
+            self.scale_factor,
+            super::textlayout::DEFAULT_FONT_SIZE,
+            Some(max_width),
+            max_height,
+        );
 
-            // TODO:
-            // text alignment (horizontal and vertical)
-            // overflow handling
-            // wrap / no-wrap
+        let paint = match self.brush_to_paint(text_input.color(), max_width, max_height) {
+            Some(paint) => paint,
+            None => return,
+        };
 
-            let pixel_size: PhysicalLength =
-                font_request.pixel_size.unwrap_or(super::textlayout::DEFAULT_FONT_SIZE)
-                    * self.scale_factor;
-
-            // apply correct font to attributes, etc.
-            let mut buffer = cosmic_text::Buffer::new(
-                &mut font_system,
-                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
-            );
-            buffer.set_text(
-                &mut font_system,
-                string,
-                cosmic_text::Attrs::new(),
-                cosmic_text::Shaping::Advanced,
-            );
-            buffer.set_size(&mut font_system, max_width.get(), max_height.get());
-
-            let paint = match self.brush_to_paint(text_input.color(), max_width, max_height) {
-                Some(paint) => paint,
-                None => return,
-            };
-
-            self.draw_glyphs(buffer, font_system, paint);
-        });
+        self.draw_glyphs(layout.buffer, paint);
 
         // let selection = if !visual_representation.preedit_range.is_empty() {
         //     Some(super::textlayout::Selection {

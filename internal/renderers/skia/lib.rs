@@ -22,7 +22,6 @@ use i_slint_core::lengths::{
 use i_slint_core::platform::PlatformError;
 use i_slint_core::window::WindowInner;
 use i_slint_core::Brush;
-use lyon_path::geom::euclid::num::Round;
 use unicode_segmentation::UnicodeSegmentation;
 
 type PhysicalLength = euclid::Length<f32, PhysicalPx>;
@@ -271,37 +270,17 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         let string = text_input.text();
         let string = string.as_str();
 
-        let byte_offset = sharedfontdb::FONT_DB.with(|db| {
-            let mut db = db.borrow_mut();
-            let mut font_system = &mut db.font_system;
+        let layout = i_slint_core::cosmic_text::TextLayout::new(
+            &string,
+            &font_request,
+            scale_factor,
+            textlayout::DEFAULT_FONT_SIZE,
+            Some(max_width),
+            max_height,
+        );
 
-            // TODO:
-            // text alignment (horizontal and vertical)
-            // overflow handling
-            // wrap / no-wrap
-
-            let pixel_size: PhysicalLength =
-                font_request.pixel_size.unwrap_or(textlayout::DEFAULT_FONT_SIZE) * scale_factor;
-
-            let mut buffer = cosmic_text::Buffer::new(
-                &mut font_system,
-                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
-            );
-            buffer.set_text(
-                &mut font_system,
-                string,
-                cosmic_text::Attrs::new(),
-                cosmic_text::Shaping::Advanced,
-            );
-            buffer.shape_until(&mut font_system, i32::max_value());
-            buffer.set_size(font_system, max_width.get(), max_height.get());
-
-            if let Some(cursor) = buffer.hit(pos.x, pos.y) {
-                cursor.index
-            } else {
-                0
-            }
-        });
+        let byte_offset =
+            if let Some(cursor) = layout.buffer.hit(pos.x, pos.y) { cursor.index } else { 0 };
 
         visual_representation.map_byte_offset_from_byte_offset_in_visual_text(byte_offset)
     }
@@ -325,107 +304,90 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         let mut cursor_x = 0.;
         let mut cursor_y = 0.;
 
-        let cursor_pos = sharedfontdb::FONT_DB.with(|db| {
-            let mut db = db.borrow_mut();
-            let mut font_system = &mut db.font_system;
+        let layout = i_slint_core::cosmic_text::TextLayout::new(
+            &string,
+            &font_request,
+            scale_factor,
+            textlayout::DEFAULT_FONT_SIZE,
+            Some(max_width),
+            max_height,
+        );
 
-            // TODO:
-            // text alignment (horizontal and vertical)
-            // overflow handling
-            // wrap / no-wrap
+        let pixel_size: PhysicalLength =
+            font_request.pixel_size.unwrap_or(textlayout::DEFAULT_FONT_SIZE) * scale_factor;
 
-            let pixel_size: PhysicalLength =
-                font_request.pixel_size.unwrap_or(textlayout::DEFAULT_FONT_SIZE) * scale_factor;
+        for run in layout.buffer.layout_runs() {
+            let line_i = run.line_i;
+            let line_y = run.line_y;
 
-            let mut buffer = cosmic_text::Buffer::new(
-                &mut font_system,
-                cosmic_text::Metrics { font_size: pixel_size.get(), line_height: pixel_size.get() },
-            );
-            buffer.set_text(
-                &mut font_system,
-                string,
-                cosmic_text::Attrs::new(),
-                cosmic_text::Shaping::Advanced,
-            );
-            buffer.shape_until(&mut font_system, i32::max_value());
-            buffer.set_size(font_system, max_width.get(), max_height.get());
+            let cursor_glyph_opt = |cursor: &cosmic_text::Cursor| -> Option<(usize, f32)> {
+                if cursor.line == line_i {
+                    for (glyph_i, glyph) in run.glyphs.iter().enumerate() {
+                        if cursor.index == glyph.start {
+                            return Some((glyph_i, 0.0));
+                        } else if cursor.index > glyph.start && cursor.index < glyph.end {
+                            // Guess x offset based on characters
+                            let mut before = 0;
+                            let mut total = 0;
 
-            for run in buffer.layout_runs() {
-                let line_i = run.line_i;
-                let line_y = run.line_y;
-
-                let cursor_glyph_opt = |cursor: &cosmic_text::Cursor| -> Option<(usize, f32)> {
-                    if cursor.line == line_i {
-                        for (glyph_i, glyph) in run.glyphs.iter().enumerate() {
-                            if cursor.index == glyph.start {
-                                return Some((glyph_i, 0.0));
-                            } else if cursor.index > glyph.start && cursor.index < glyph.end {
-                                // Guess x offset based on characters
-                                let mut before = 0;
-                                let mut total = 0;
-
-                                let cluster = &run.text[glyph.start..glyph.end];
-                                for (i, _) in cluster.grapheme_indices(true) {
-                                    if glyph.start + i < cursor.index {
-                                        before += 1;
-                                    }
-                                    total += 1;
+                            let cluster = &run.text[glyph.start..glyph.end];
+                            for (i, _) in cluster.grapheme_indices(true) {
+                                if glyph.start + i < cursor.index {
+                                    before += 1;
                                 }
+                                total += 1;
+                            }
 
-                                let offset = glyph.w * (before as f32) / (total as f32);
-                                return Some((glyph_i, offset));
-                            }
-                        }
-                        match run.glyphs.last() {
-                            Some(glyph) => {
-                                if cursor.index == glyph.end {
-                                    return Some((run.glyphs.len(), 0.0));
-                                }
-                            }
-                            None => {
-                                return Some((0, 0.0));
-                            }
+                            let offset = glyph.w * (before as f32) / (total as f32);
+                            return Some((glyph_i, offset));
                         }
                     }
-                    None
-                };
-
-                if let Some((cursor_glyph, cursor_glyph_offset)) =
-                    cursor_glyph_opt(&cosmic_text::Cursor::new(
-                        0,
-                        text_input.cursor_position_byte_offset().round() as usize,
-                    ))
-                {
-                    let x = match run.glyphs.get(cursor_glyph) {
+                    match run.glyphs.last() {
                         Some(glyph) => {
-                            // Start of detected glyph
-                            if glyph.level.is_rtl() {
-                                (glyph.x + glyph.w - cursor_glyph_offset) as i32
-                            } else {
-                                (glyph.x + cursor_glyph_offset) as i32
+                            if cursor.index == glyph.end {
+                                return Some((run.glyphs.len(), 0.0));
                             }
                         }
-                        None => match run.glyphs.last() {
-                            Some(glyph) => {
-                                // End of last glyph
-                                if glyph.level.is_rtl() {
-                                    glyph.x as i32
-                                } else {
-                                    (glyph.x + glyph.w) as i32
-                                }
-                            }
-                            None => {
-                                // Start of empty line
-                                0
-                            }
-                        },
-                    };
-
-                    cursor_x = x as f32;
-                    cursor_y = line_y - pixel_size.get();
+                        None => {
+                            return Some((0, 0.0));
+                        }
+                    }
                 }
+                None
+            };
+
+            if let Some((cursor_glyph, cursor_glyph_offset)) =
+                cursor_glyph_opt(&cosmic_text::Cursor::new(0, byte_offset as usize))
+            {
+                let x = match run.glyphs.get(cursor_glyph) {
+                    Some(glyph) => {
+                        // Start of detected glyph
+                        if glyph.level.is_rtl() {
+                            (glyph.x + glyph.w - cursor_glyph_offset) as i32
+                        } else {
+                            (glyph.x + cursor_glyph_offset) as i32
+                        }
+                    }
+                    None => match run.glyphs.last() {
+                        Some(glyph) => {
+                            // End of last glyph
+                            if glyph.level.is_rtl() {
+                                glyph.x as i32
+                            } else {
+                                (glyph.x + glyph.w) as i32
+                            }
+                        }
+                        None => {
+                            // Start of empty line
+                            0
+                        }
+                    },
+                };
+
+                cursor_x = x as f32;
+                cursor_y = line_y - pixel_size.get();
             }
-        });
+        }
 
         println!("x: {}, y: {}", cursor_x / scale_factor.get(), cursor_y);
 
@@ -439,24 +401,6 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         .cast()
             / scale_factor)
             .cast();
-    }
-
-    fn register_font_from_memory(
-        &self,
-        data: &'static [u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO(cosmic): remove
-        textlayout::register_font_from_memory(data).unwrap();
-        sharedfontdb::register_font_from_memory(data)
-    }
-
-    fn register_font_from_path(
-        &self,
-        path: &std::path::Path,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO(cosmic): remove
-        textlayout::register_font_from_path(path).unwrap();
-        sharedfontdb::register_font_from_path(path)
     }
 
     fn set_rendering_notifier(

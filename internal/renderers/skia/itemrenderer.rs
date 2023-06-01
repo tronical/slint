@@ -561,60 +561,6 @@ impl<'a> ItemRenderer for SkiaRenderer<'a> {
         };
 
         self.draw_glyphs(layout.buffer, paint);
-
-        // let selection = if !visual_representation.preedit_range.is_empty() {
-        //     Some(super::textlayout::Selection {
-        //         range: visual_representation.preedit_range,
-        //         foreground: None,
-        //         background: None,
-        //         underline: true,
-        //     })
-        // } else if !visual_representation.selection_range.is_empty() {
-        //     Some(super::textlayout::Selection {
-        //         range: visual_representation.selection_range,
-        //         foreground: text_input.selection_foreground_color().into(),
-        //         background: text_input.selection_background_color().into(),
-        //         underline: false,
-        //     })
-        // } else {
-        //     None
-        // };
-
-        // let (layout, layout_top_left) = super::textlayout::create_layout(
-        //     font_request,
-        //     self.scale_factor,
-        //     &visual_representation.text,
-        //     Some(text_style),
-        //     Some(max_width),
-        //     max_height,
-        //     text_input.horizontal_alignment(),
-        //     text_input.vertical_alignment(),
-        //     i_slint_core::items::TextOverflow::Clip,
-        //     selection.as_ref(),
-        // );
-
-        // layout.paint(&mut self.canvas, to_skia_point(layout_top_left));
-
-        // if let Some(cursor_position) = visual_representation.cursor_position {
-        //     let cursor_rect = super::textlayout::cursor_rect(
-        //         &visual_representation.text,
-        //         cursor_position,
-        //         layout,
-        //         text_input.text_cursor_width() * self.scale_factor,
-        //     )
-        //     .translate(layout_top_left.to_vector());
-
-        //     let cursor_paint = match self.brush_to_paint(
-        //         text_input.color(),
-        //         cursor_rect.width_length(),
-        //         cursor_rect.height_length(),
-        //     ) {
-        //         Some(paint) => paint,
-        //         None => return,
-        //     };
-
-        //     self.canvas.draw_rect(to_skia_rect(&cursor_rect), &cursor_paint);
-        // }
     }
 
     fn draw_path(

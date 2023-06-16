@@ -292,6 +292,7 @@ fn load_image(
             ))
         })?;
         // TODO: ideally we should find the size used for that `Image`
+        let scale_factor = scale_factor as f32;
         let original_size = tree.size;
         let width = original_size.width() * scale_factor;
         let height = original_size.height() * scale_factor;

@@ -370,7 +370,22 @@ impl OpenGLSurface {
 
 impl Drop for OpenGLSurface {
     fn drop(&mut self) {
-        // Make sure that the context is current before Skia calls glDelete***
-        self.ensure_context_current().expect("Skia OpenGL Renderer: Failed to make OpenGL context current before deleting graphics resources");
+        // We should make the GL context current here, so that Skia can call glDelete*** to free textures.
+        // Unfortunately in some circumstances, on Windows, on some planets, in some moon phases, when using multiple windows,
+        // making the GL context fails. If that fails, then let's at least make sure that _no_ context is current,
+        // so that the glDelete* calls in Skia go into nirvana, instead of accidentally deleting from another context.
+        // This should be fine, because the life-cycle of the GL context, the window surface, and the skia renderer
+        // are joint.
+        let result = self.ensure_context_current();
+        #[cfg(not(target_family = "windows"))]
+        result.expect("Skia OpenGL Renderer: Failed to make OpenGL context current before deleting graphics resources");
+        #[cfg(target_family = "windows")]
+        if result.is_err() {
+            unsafe {
+                use glutin_wgl_sys::wgl;
+                let hdc = wgl::GetCurrentDC();
+                wgl::MakeCurrent(hdc, std::ptr::null());
+            }
+        }
     }
 }

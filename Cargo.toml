@@ -104,3 +104,5 @@ panic = "abort"
 [profile.dev]
 panic = "abort"
 
+[patch.crates-io]
+glutin = { git = 'https://github.com/slint-ui/glutin.git', branch = 'simon/angle' }

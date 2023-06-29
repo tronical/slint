@@ -47,6 +47,9 @@ impl super::Surface for OpenGLSurface {
                     current_glutin_context.display().get_proc_address(name) as *const _
                 })
             };
+
+            eprintln!("Running on {}", unsafe { gl.get_parameter_string(glow::RENDERER)} );
+
             let fboid = unsafe { gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING) };
 
             skia_safe::gpu::gl::FramebufferInfo {

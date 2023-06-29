@@ -56,6 +56,11 @@ impl super::Surface for OpenGLSurface {
             format!("Attempting to create window surface with an invalid height: {}", size.height)
         })?;
 
+        #[cfg(target_family = "windows")]
+        let old_hdc = unsafe { glutin_wgl_sys::wgl::GetCurrentDC() };
+        #[cfg(target_family = "windows")]
+        let old_hrc = unsafe { glutin_wgl_sys::wgl::GetCurrentContext() };
+
         let (current_glutin_context, glutin_surface) =
             Self::init_glutin(window, display, width, height)?;
 
@@ -104,17 +109,18 @@ impl super::Surface for OpenGLSurface {
         )?
         .into();
 
-        Ok(Self {
-            fb_info,
-            surface,
-            gr_context: RefCell::new(gr_context),
-            context: RefCell::new(Some(ContextState::NotCurrent(
-                current_glutin_context
-                    .make_not_current()
-                    .map_err(|e| format!("Error making GL context not current: {e}"))?,
-            ))),
-            glutin_surface,
-        })
+        let context = RefCell::new(Some(ContextState::NotCurrent(
+            current_glutin_context
+                .make_not_current()
+                .map_err(|e| format!("Error making GL context not current: {e}"))?,
+        )));
+
+        #[cfg(target_family = "windows")]
+        unsafe {
+            glutin_wgl_sys::wgl::MakeCurrent(old_hdc, old_hrc);
+        }
+
+        Ok(Self { fb_info, surface, gr_context: RefCell::new(gr_context), context, glutin_surface })
     }
 
     fn name(&self) -> &'static str {

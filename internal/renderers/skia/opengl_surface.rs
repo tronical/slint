@@ -145,6 +145,11 @@ impl super::Surface for OpenGLSurface {
         size: PhysicalWindowSize,
         callback: impl FnOnce(&mut skia_safe::Canvas, &mut skia_safe::gpu::DirectContext),
     ) -> Result<(), PlatformError> {
+        #[cfg(target_family = "windows")]
+        let old_hdc = unsafe { glutin_wgl_sys::wgl::GetCurrentDC() };
+        #[cfg(target_family = "windows")]
+        let old_hrc = unsafe { glutin_wgl_sys::wgl::GetCurrentContext() };
+
         let current_context = self.make_context_current()?;
 
         let gr_context = &mut self.gr_context.borrow_mut();
@@ -176,10 +181,20 @@ impl super::Surface for OpenGLSurface {
             },
         )?;
 
-        self.make_context_not_current(current_context)
+        self.make_context_not_current(current_context)?;
+        #[cfg(target_family = "windows")]
+        unsafe {
+            glutin_wgl_sys::wgl::MakeCurrent(old_hdc, old_hrc);
+        }
+        Ok(())
     }
 
     fn resize_event(&self, size: PhysicalWindowSize) -> Result<(), PlatformError> {
+        #[cfg(target_family = "windows")]
+        let old_hdc = unsafe { glutin_wgl_sys::wgl::GetCurrentDC() };
+        #[cfg(target_family = "windows")]
+        let old_hrc = unsafe { glutin_wgl_sys::wgl::GetCurrentContext() };
+
         let current_context = self.make_context_current()?;
 
         let width = size.width.try_into().map_err(|_| {
@@ -196,7 +211,12 @@ impl super::Surface for OpenGLSurface {
         })?;
 
         self.glutin_surface.resize(&current_context, width, height);
-        self.make_context_not_current(current_context)
+        self.make_context_not_current(current_context)?;
+        #[cfg(target_family = "windows")]
+        unsafe {
+            glutin_wgl_sys::wgl::MakeCurrent(old_hdc, old_hrc);
+        }
+        Ok(())
     }
 
     fn bits_per_pixel(&self) -> Result<u8, PlatformError> {

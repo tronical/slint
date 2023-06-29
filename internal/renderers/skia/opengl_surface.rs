@@ -1,7 +1,7 @@
 // Copyright © SixtyFPS GmbH <info@slint-ui.com>
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-commercial
 
-use std::{cell::RefCell, num::NonZeroU32};
+use std::{cell::RefCell, num::NonZeroU32, rc::Rc};
 
 use glutin::{
     config::GetGlConfig,
@@ -13,11 +13,31 @@ use glutin::{
 use i_slint_core::api::PhysicalSize as PhysicalWindowSize;
 use i_slint_core::{api::GraphicsAPI, platform::PlatformError};
 
+enum ContextState {
+    Current(Rc<glutin::context::PossiblyCurrentContext>),
+    NotCurrent(glutin::context::NotCurrentContext),
+}
+
+impl ContextState {
+    fn display(&self) -> Result<glutin::display::Display, PlatformError> {
+        Ok(match self {
+            ContextState::Current(ctx) => ctx.display(),
+            ContextState::NotCurrent(ctx) => ctx.display(),
+        })
+    }
+    fn config(&self) -> Result<glutin::config::Config, PlatformError> {
+        Ok(match self {
+            ContextState::Current(ctx) => ctx.config(),
+            ContextState::NotCurrent(ctx) => ctx.config(),
+        })
+    }
+}
+
 pub struct OpenGLSurface {
     fb_info: skia_safe::gpu::gl::FramebufferInfo,
     surface: RefCell<skia_safe::Surface>,
     gr_context: RefCell<skia_safe::gpu::DirectContext>,
-    glutin_context: glutin::context::PossiblyCurrentContext,
+    context: RefCell<Option<ContextState>>,
     glutin_surface: glutin::surface::Surface<glutin::surface::WindowSurface>,
 }
 
@@ -88,7 +108,11 @@ impl super::Surface for OpenGLSurface {
             fb_info,
             surface,
             gr_context: RefCell::new(gr_context),
-            glutin_context: current_glutin_context,
+            context: RefCell::new(Some(ContextState::NotCurrent(
+                current_glutin_context
+                    .make_not_current()
+                    .map_err(|e| format!("Error making GL context not current: {e}"))?,
+            ))),
             glutin_surface,
         })
     }
@@ -98,17 +122,21 @@ impl super::Surface for OpenGLSurface {
     }
 
     fn with_graphics_api(&self, callback: impl FnOnce(GraphicsAPI<'_>)) {
+        let ctx = self.make_context_current().unwrap();
         let api = GraphicsAPI::NativeOpenGL {
             get_proc_address: &|name| {
-                self.glutin_context.display().get_proc_address(name) as *const _
+                self.context.borrow().as_ref().unwrap().display().unwrap().get_proc_address(name)
+                    as *const _
             },
         };
-        callback(api)
+        callback(api);
+        self.make_context_not_current(ctx).unwrap();
     }
 
     fn with_active_surface(&self, callback: impl FnOnce()) -> Result<(), PlatformError> {
-        self.ensure_context_current()?;
+        let ctx = self.make_context_current()?;
         callback();
+        self.make_context_not_current(ctx)?;
         Ok(())
     }
 
@@ -117,9 +145,7 @@ impl super::Surface for OpenGLSurface {
         size: PhysicalWindowSize,
         callback: impl FnOnce(&mut skia_safe::Canvas, &mut skia_safe::gpu::DirectContext),
     ) -> Result<(), PlatformError> {
-        self.ensure_context_current()?;
-
-        let current_context = &self.glutin_context;
+        let current_context = self.make_context_current()?;
 
         let gr_context = &mut self.gr_context.borrow_mut();
 
@@ -144,13 +170,17 @@ impl super::Surface for OpenGLSurface {
 
         callback(skia_canvas, gr_context);
 
-        self.glutin_surface.swap_buffers(&current_context).map_err(|glutin_error| {
-            format!("Skia OpenGL Renderer: Error swapping buffers: {glutin_error}").into()
-        })
+        self.glutin_surface.swap_buffers(&current_context).map_err(
+            |glutin_error| -> PlatformError {
+                format!("Skia OpenGL Renderer: Error swapping buffers: {glutin_error}").into()
+            },
+        )?;
+
+        self.make_context_not_current(current_context)
     }
 
     fn resize_event(&self, size: PhysicalWindowSize) -> Result<(), PlatformError> {
-        self.ensure_context_current()?;
+        let current_context = self.make_context_current()?;
 
         let width = size.width.try_into().map_err(|_| {
             format!(
@@ -165,12 +195,12 @@ impl super::Surface for OpenGLSurface {
             )
         })?;
 
-        self.glutin_surface.resize(&self.glutin_context, width, height);
-        Ok(())
+        self.glutin_surface.resize(&current_context, width, height);
+        self.make_context_not_current(current_context)
     }
 
     fn bits_per_pixel(&self) -> Result<u8, PlatformError> {
-        let config = self.glutin_context.config();
+        let config = self.context.borrow().as_ref().unwrap().config()?;
         let rgb_bits = match config.color_buffer_type() {
             Some(glutin::config::ColorBufferType::Rgb { r_size, g_size, b_size }) => {
                 r_size + g_size + b_size
@@ -356,21 +386,61 @@ impl OpenGLSurface {
         }
     }
 
-    fn ensure_context_current(&self) -> Result<(), PlatformError> {
-        if !self.glutin_context.is_current() {
-            self.glutin_context.make_current(&self.glutin_surface).map_err(
-                |glutin_error| -> PlatformError {
-                    format!("Skia Renderer: Error making context current: {glutin_error}").into()
-                },
-            )?;
+    fn make_context_current(
+        &self,
+    ) -> Result<Rc<glutin::context::PossiblyCurrentContext>, PlatformError> {
+        let state = self.context.borrow_mut().take().unwrap();
+        match state {
+            ContextState::Current(ctx) => {
+                let current_ctx = ctx.clone();
+                *self.context.borrow_mut() = Some(ContextState::Current(ctx));
+                Ok(current_ctx)
+            }
+            ContextState::NotCurrent(not_current_ctx) => {
+                let current = Rc::new(not_current_ctx.make_current(&self.glutin_surface).map_err(
+                    |glutin_error| -> PlatformError {
+                        format!("Skia Renderer: Error making context current: {glutin_error}")
+                            .into()
+                    },
+                )?);
+                *self.context.borrow_mut() = Some(ContextState::Current(current.clone()));
+                Ok(current)
+            }
         }
-        Ok(())
+    }
+
+    fn make_context_not_current(
+        &self,
+        current: Rc<glutin::context::PossiblyCurrentContext>,
+    ) -> Result<(), PlatformError> {
+        let state = self.context.borrow_mut().take().unwrap();
+        match state {
+            ContextState::Current(ctx) => {
+                drop(current);
+                match Rc::try_unwrap(ctx) {
+                    Ok(last_current) => {
+                        *self.context.borrow_mut() = Some(ContextState::NotCurrent(
+                            last_current.make_not_current().unwrap(),
+                        ));
+                    }
+                    Err(still_current) => {
+                        *self.context.borrow_mut() = Some(ContextState::Current(still_current));
+                    }
+                }
+                Ok(())
+            }
+            state @ ContextState::NotCurrent(_) => {
+                *self.context.borrow_mut() = Some(state);
+
+                Ok(())
+            }
+        }
     }
 }
 
 impl Drop for OpenGLSurface {
     fn drop(&mut self) {
         // Make sure that the context is current before Skia calls glDelete***
-        self.ensure_context_current().expect("Skia OpenGL Renderer: Failed to make OpenGL context current before deleting graphics resources");
+        self.make_context_current().expect("Skia OpenGL Renderer: Failed to make OpenGL context current before deleting graphics resources");
     }
 }

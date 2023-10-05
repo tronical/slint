@@ -15,6 +15,7 @@ endif(CONFIG_IDF_TARGET_ARCH_XTENSA)
 
 set(SLINT_FEATURE_FREESTANDING ON)
 set(SLINT_FEATURE_RENDERER_SOFTWARE ON)
+set(SLINT_FEATURE_EXPERIMENTAL ON)
 set(SLINT_LIBRARY_CARGO_FLAGS "-Zbuild-std=core,alloc")
 set(DEFAULT_SLINT_EMBED_RESOURCES "embed-for-software-renderer" CACHE STRING "")
 set(CMAKE_BUILD_TYPE Release)
@@ -28,7 +29,7 @@ else(SLINT_ESP_LOCAL_EXAMPLE)
     FetchContent_Declare(
         Slint
         GIT_REPOSITORY https://github.com/slint-ui/slint
-        GIT_TAG v1.3.0
+        GIT_TAG olivier/rotation
         SOURCE_SUBDIR api/cpp
     )
     FetchContent_MakeAvailable(Slint)

@@ -26,7 +26,7 @@ use crate::input::{
     KeyEventType, MouseEvent,
 };
 use crate::item_rendering::{CachedRenderingData, RenderBorderRectangle};
-pub use crate::item_tree::ItemRc;
+pub use crate::item_tree::{ItemRc, ItemTreeVTable};
 use crate::layout::LayoutInfo;
 use crate::lengths::{
     LogicalBorderRadius, LogicalLength, LogicalSize, LogicalVector, PointLengths, RectLengths,
@@ -126,7 +126,7 @@ pub struct ItemVTable {
         core::pin::Pin<VRef<ItemVTable>>,
         orientation: Orientation,
         window_adapter: &WindowAdapterRc,
-        self_component: &vtable::VRc<crate::item_tree::ItemTreeVTable>,
+        self_component: &vtable::VRc<ItemTreeVTable>,
         self_index: u32,
     ) -> LayoutInfo,
 

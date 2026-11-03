@@ -1,0 +1,88 @@
+# Copyright © SixtyFPS GmbH <info@slint.dev>
+# SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+# Publishes the web build of the flight tracker demo from slint-ui/slint simon/globe
+# to this repository's gh-pages branch.
+# A push upstream can't trigger a workflow in a fork, so this polls for a new tip.
+
+name: Flight tracker web demo
+
+on:
+    schedule:
+        - cron: "17 * * * *"
+    workflow_dispatch:
+        inputs:
+            force:
+                type: boolean
+                default: false
+                description: "Rebuild even if gh-pages already has the upstream tip"
+
+permissions:
+    contents: write
+
+concurrency:
+    group: flight-tracker-pages
+
+env:
+    SOURCE_REPO: https://github.com/slint-ui/slint
+    SOURCE_BRANCH: simon/globe
+
+jobs:
+    publish:
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Compare upstream tip with the published build
+              id: check
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  source=$(git ls-remote "$SOURCE_REPO" "refs/heads/$SOURCE_BRANCH" | cut -f1)
+                  if [ -z "$source" ]; then
+                      echo "::error::$SOURCE_BRANCH not found in $SOURCE_REPO"
+                      exit 1
+                  fi
+                  published=$(gh api "repos/$GITHUB_REPOSITORY/commits/gh-pages" --jq .commit.message 2>/dev/null | grep -oE '\b[0-9a-f]{40}\b' | head -1 || true)
+                  echo "upstream: $source, published: ${published:-none}"
+                  echo "source=$source" >> "$GITHUB_OUTPUT"
+                  if [ "$source" != "$published" ] || [ "${{ inputs.force }}" = "true" ]; then
+                      echo "build=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - uses: actions/checkout@v7
+              if: steps.check.outputs.build
+              with:
+                  repository: slint-ui/slint
+                  ref: ${{ steps.check.outputs.source }}
+                  path: source
+                  persist-credentials: false
+
+            - name: Install Rust and wasm-bindgen
+              if: steps.check.outputs.build
+              working-directory: source/demos
+              run: |
+                  rustup target add wasm32-unknown-unknown
+                  version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
+                  cargo install wasm-bindgen-cli --version "$version" --locked
+
+            - name: Build
+              if: steps.check.outputs.build
+              working-directory: source/demos
+              run: |
+                  sed -i 's/^#wasm# //' flight-tracker/Cargo.toml
+                  cargo build --release --target wasm32-unknown-unknown -p flight-tracker --lib
+                  site=$GITHUB_WORKSPACE/site
+                  wasm-bindgen --target web --out-dir "$site/flight-tracker/pkg" --no-typescript ../target/wasm32-unknown-unknown/release/flight_tracker.wasm
+                  cp flight-tracker/index.html "$site/flight-tracker/"
+                  touch "$site/.nojekyll"
+                  find "$site" -type f -exec ls -l {} +
+
+            - name: Publish to gh-pages
+              if: steps.check.outputs.build
+              working-directory: site
+              run: |
+                  git init -q -b gh-pages
+                  git add -A
+                  git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                      commit -q -m "Publish the flight tracker demo's web build" \
+                      -m "Built from slint-ui/slint $SOURCE_BRANCH at ${{ steps.check.outputs.source }}."
+                  git push --force "https://x-access-token:${{ github.token }}@github.com/$GITHUB_REPOSITORY" gh-pages

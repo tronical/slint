@@ -766,7 +766,7 @@ function __wbg_get_imports() {
             const ret = arg0.finish(arg1);
             return ret;
         },
-        __wbg_flightTrackerReady_7366b06cd718e029: function() { return handleError(function () {
+        __wbg_flightTrackerReady_5999dbb76e516dc9: function() { return handleError(function () {
             flightTrackerReady();
         }, arguments); },
         __wbg_flush_4911c503a18d091d: function(arg0) {
